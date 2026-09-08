@@ -1,0 +1,139 @@
+///|
+pub(all) enum EndpointStyle {
+  VirtualHost
+  Path
+} derive(Debug, Eq)
+
+///|
+priv enum S3Method {
+  Get
+  Head
+  Put
+  Delete
+}
+
+///|
+struct Credentials {
+  access_key_id : String
+  secret_access_key : String
+  session_token : String?
+} derive(Eq)
+
+///|
+pub impl Debug for Credentials with fn to_repr(self) {
+  let redacted = Repr::string("***")
+  let session_token = match self.session_token {
+    Some(_) => Repr::ctor("Some", [(None, redacted)])
+    None => Repr::ctor("None", [])
+  }
+  Repr::record({
+    "access_key_id": Repr::string(self.access_key_id),
+    "secret_access_key": redacted,
+    "session_token": session_token,
+  })
+}
+
+///|
+struct Config {
+  region : String
+  credentials : Credentials
+  endpoint : String?
+  endpoint_style : EndpointStyle
+} derive(Debug, Eq)
+
+///|
+pub suberror S3Error {
+  InvalidConfig(String)
+  InvalidInput(String)
+  InvalidResponse(String)
+  ServiceError(@http.Response, String)
+} derive(Debug)
+
+///|
+struct Client {
+  config : Config
+}
+
+///|
+pub struct ObjectResult {
+  response : @http.Response
+  body : &ReadCloser
+}
+
+///|
+pub struct ListedObject {
+  key : String
+  size : Int64
+  etag : String?
+} derive(Debug, Eq)
+
+///|
+pub struct ListObjectsV2Result {
+  is_truncated : Bool
+  next_continuation_token : String?
+  contents : Array[ListedObject]
+  common_prefixes : Array[String]
+} derive(Debug, Eq)
+
+///|
+struct RequestOptions {
+  headers : Map[String, String]
+  query : Map[String, String]
+  timestamp : String?
+  payload_hash : String?
+} derive(Debug)
+
+///|
+pub(open) trait ReadCloser: @io.Reader {
+  fn close(Self) -> Unit
+}
+
+///|
+priv struct Request {
+  origin : String
+  target : String
+  headers : Map[String, String]
+}
+
+///|
+pub fn Credentials::Credentials(
+  access_key_id : String,
+  secret_access_key : String,
+  session_token? : String,
+) -> Credentials {
+  { access_key_id, secret_access_key, session_token, }
+}
+
+///|
+pub fn Config::Config(
+  region : String,
+  credentials : Credentials,
+  endpoint? : String,
+  endpoint_style? : EndpointStyle = VirtualHost,
+) -> Config {
+  { region, credentials, endpoint, endpoint_style, }
+}
+
+///|
+pub fn RequestOptions::RequestOptions(
+  headers? : Map[String, String] = {},
+  query? : Map[String, String] = {},
+  timestamp? : String,
+  payload_hash? : String,
+) -> RequestOptions {
+  { headers, query, timestamp, payload_hash, }
+}
+
+///|
+pub fn Client::Client(config : Config) -> Client raise {
+  if config.region == "" {
+    raise S3Error::InvalidConfig("region must not be empty")
+  }
+  if config.credentials.access_key_id == "" {
+    raise S3Error::InvalidConfig("access key id must not be empty")
+  }
+  if config.credentials.secret_access_key == "" {
+    raise S3Error::InvalidConfig("secret access key must not be empty")
+  }
+  { config, }
+}
