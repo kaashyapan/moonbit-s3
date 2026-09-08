@@ -276,6 +276,136 @@ test "explicit default ports are kept in signed host" {
 }
 
 ///|
+test "presign query follows sigv4 query signing" {
+  let client = test_client("https://examplebucket.s3.amazonaws.com")
+  let query = presign_query(
+    Get,
+    "/test.txt",
+    "examplebucket.s3.amazonaws.com",
+    client.config.credentials,
+    "us-east-1",
+    "20130524T000000Z",
+    86400,
+  )
+  assert_eq(query["X-Amz-Algorithm"], "AWS4-HMAC-SHA256")
+  assert_eq(
+    query["X-Amz-Credential"],
+    "AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request",
+  )
+  assert_eq(query["X-Amz-Date"], "20130524T000000Z")
+  assert_eq(query["X-Amz-Expires"], "86400")
+  assert_eq(
+    query["X-Amz-Signature"],
+    "3ed0be64024db54d5574a27da223529635c383f911f80e636f0ccc13890053d2",
+  )
+}
+
+///|
+test "presign query signs content type when present" {
+  let client = test_client("https://examplebucket.s3.amazonaws.com")
+  let query = presign_query(
+    Put,
+    "/test.txt",
+    "examplebucket.s3.amazonaws.com",
+    client.config.credentials,
+    "us-east-1",
+    "20130524T000000Z",
+    3600,
+    content_type="text/plain",
+  )
+  assert_eq(query["Content-Type"], "text/plain")
+  assert_true(query.get("X-Amz-Signature") is Some(_))
+}
+
+///|
+test "presign query includes session token" {
+  let client = test_client(
+    "https://examplebucket.s3.amazonaws.com",
+    session_token="session-token",
+  )
+  let query = presign_query(
+    Get,
+    "/test.txt",
+    "examplebucket.s3.amazonaws.com",
+    client.config.credentials,
+    "us-east-1",
+    "20130524T000000Z",
+    3600,
+  )
+  assert_eq(query["X-Amz-Security-Token"], "session-token")
+}
+
+///|
+test "generate presigned urls produce signed query strings" {
+  let client = test_client("https://examplebucket.s3.amazonaws.com")
+  let get_url = client.generate_presigned_get_url("examplebucket", "test.txt")
+  assert_true(
+    get_url.has_prefix(
+      "https://examplebucket.s3.amazonaws.com/examplebucket/test.txt?",
+    ),
+  )
+  assert_true(get_url.contains("X-Amz-Signature="))
+  let put_url = client.generate_presigned_put_url(
+    "examplebucket",
+    "test.txt",
+    content_type="text/plain",
+  )
+  assert_true(
+    put_url.has_prefix(
+      "https://examplebucket.s3.amazonaws.com/examplebucket/test.txt?",
+    ),
+  )
+  assert_true(put_url.contains("Content-Type=text%2Fplain"))
+}
+
+///|
+test "presigned urls reject empty key and invalid expiry" {
+  let client = test_client("https://examplebucket.s3.amazonaws.com")
+  assert_presigned_url_rejected(
+    () => ignore(client.generate_presigned_get_url("examplebucket", "")),
+    "key must not be empty",
+  )
+  assert_presigned_url_rejected(
+    () => {
+      ignore(
+        client.generate_presigned_get_url(
+          "examplebucket",
+          "a",
+          expires_seconds=0,
+        ),
+      )
+    },
+    "expires_seconds must be between 1 and 604800",
+  )
+  assert_presigned_url_rejected(
+    () => {
+      ignore(
+        client.generate_presigned_put_url(
+          "examplebucket",
+          "a",
+          expires_seconds=604801,
+        ),
+      )
+    },
+    "expires_seconds must be between 1 and 604800",
+  )
+}
+
+///|
+fn assert_presigned_url_rejected(
+  f : () -> Unit raise,
+  message : String,
+) -> Unit raise {
+  try {
+    ignore(f())
+    fail("expected invalid input")
+  } catch {
+    S3Error::InvalidInput(actual) => assert_eq(actual, message)
+    _ => fail("expected invalid input")
+  }
+}
+
+///|
 test "signer controlled headers are filtered case insensitively" {
   let client = test_client(
     "https://examplebucket.s3.amazonaws.com",

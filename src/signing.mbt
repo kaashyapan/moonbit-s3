@@ -128,3 +128,54 @@ fn sign_headers(
   signed["Authorization"] = "AWS4-HMAC-SHA256 Credential=\{credentials.access_key_id}/\{scope}, SignedHeaders=\{signed_headers}, Signature=\{signature}"
   signed
 }
+
+///|
+fn presign_query(
+  meth : S3Method,
+  path : String,
+  host : String,
+  content_type? : String,
+  credentials : Credentials,
+  region : String,
+  timestamp : String,
+  expires : Int,
+) -> Map[String, String] {
+  let date = timestamp[:8].to_owned()
+  let scope = "\{date}/\{region}/s3/aws4_request"
+  let query : Map[String, String] = Map([])
+  query["X-Amz-Algorithm"] = "AWS4-HMAC-SHA256"
+  query["X-Amz-Credential"] = "\{credentials.access_key_id}/\{scope}"
+  query["X-Amz-Date"] = timestamp
+  query["X-Amz-Expires"] = expires.to_string()
+  let (signed_headers, canonical) = match content_type {
+    Some(value) => {
+      query["Content-Type"] = value
+      ("content-type;host", "content-type:\{value}\nhost:\{host}\n")
+    }
+    None => ("host", "host:\{host}\n")
+  }
+  if credentials.session_token is Some(token) {
+    query["X-Amz-Security-Token"] = token
+  }
+  query["X-Amz-SignedHeaders"] = signed_headers
+  let canonical_request = [
+    method_name(meth),
+    path,
+    canonical_query(query),
+    canonical,
+    signed_headers,
+    "UNSIGNED-PAYLOAD",
+  ].join("\n")
+  let string_to_sign = [
+    "AWS4-HMAC-SHA256",
+    timestamp,
+    scope,
+    sha256_hex(canonical_request),
+  ].join("\n")
+  let signature = hmac_sha256_hex(
+    signing_key(credentials.secret_access_key, date, region).unsafe_reinterpret_as_bytes(),
+    string_to_sign,
+  )
+  query["X-Amz-Signature"] = signature
+  query
+}

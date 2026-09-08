@@ -96,9 +96,9 @@ fn canonical_query(query : Map[String, String]) -> String {
   pairs.sort_by(fn(left, right) {
     let lk = percent_encode(left.0)
     let rk = percent_encode(right.0)
-    let c = lk.compare(rk)
+    let c = ascii_compare(lk, rk)
     if c == 0 {
-      percent_encode(left.1).compare(percent_encode(right.1))
+      ascii_compare(percent_encode(left.1), percent_encode(right.1))
     } else {
       c
     }

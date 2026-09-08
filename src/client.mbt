@@ -284,68 +284,68 @@ pub async fn Client::list_objects_v2(
 }
 
 ///|
-/// Generate a presigned URL for an S3 object.
-///    :param bucket_name: Name of the S3 bucket
-///    :param object_key: Key (path) of the object within the bucket
-///    :param expiration: Time in seconds for the URL to remain valid (default 1 hour)
-///    :return: Presigned URL as a string, or None if an error occurred
-pub async fn Client::generate_presigned_get_url(
+fn Client::presigned_url(
+  self : Client,
+  meth : S3Method,
+  bucket : String,
+  key : String,
+  expires_seconds? : Int = 3600,
+  content_type? : String,
+) -> String raise {
+  ensure_object_key(key)
+  if expires_seconds <= 0 || expires_seconds > 604800 {
+    raise S3Error::InvalidInput("expires_seconds must be between 1 and 604800")
+  }
+  let (origin, host) = endpoint_origin_and_host(self.config, bucket)
+  let path = canonical_object_path(self.config, bucket, key)
+  let query = presign_query(
+    meth,
+    path,
+    host,
+    content_type?,
+    self.config.credentials,
+    self.config.region,
+    now_timestamp(),
+    expires_seconds,
+  )
+  "\{origin}\{append_query(path, query)}"
+}
+
+///|
+/// Generate a presigned GET URL for an S3 object.
+///
+///    :param bucket: Name of the S3 bucket
+///    :param key: Key (path) of the object within the bucket
+///    :param expires_seconds: Time in seconds for the URL to remain valid
+///        (default 1 hour, maximum 7 days)
+///    :return: Presigned URL as a string
+pub fn Client::generate_presigned_get_url(
   self : Client,
   bucket : String,
   key : String,
   expires_seconds? : Int = 3600,
-) -> @http.Response {
-  ensure_object_key(key)
-  let request = self.prepare_request(Get, bucket, key, b"", options~)
-  let client = @http.Client(request.origin)
-  let extra_headers = Map([])
-  request
-  .extra_headers()
-  .each((key, val) => extra_headers.set(@http.CaseInsensitiveString(key), val))
-
-  let response = client
-    ..request(@http.Get, request.target, extra_headers~)
-    .end_request() catch {
-      err => {
-        client.close()
-        raise err
-      }
-    }
-  response
+) -> String raise {
+  self.presigned_url(Get, bucket, key, expires_seconds~)
 }
 
 ///|
-///     Generate a presigned URL to upload a file directly to S3 via PUT.
-///    :param bucket_name: Name of the S3 bucket
-///    :param object_key: Key (path) where the object will be stored
-///    :param expiration: Time in seconds the URL remains valid (default 1 hour)
+/// Generate a presigned PUT URL for uploading an object directly to S3.
+///
+///    :param bucket: Name of the S3 bucket
+///    :param key: Key (path) where the object will be stored
+///    :param expires_seconds: Time in seconds the URL remains valid
+///        (default 1 hour, maximum 7 days)
 ///    :param content_type: Optional — if set, the client MUST send this exact
-///                          Content-Type header when uploading, or S3 will reject it
-///    :return: Presigned URL as a string, or None if an error occurred
-pub async fn Client::generate_presigned_put_url(
+///        Content-Type header when uploading, or S3 will reject it
+///    :return: Presigned URL as a string
+pub fn Client::generate_presigned_put_url(
   self : Client,
   bucket : String,
   key : String,
   expires_seconds? : Int = 3600,
   content_type? : String,
-) -> @http.Response {
-  ensure_object_key(key)
-  let request = self.prepare_request(Get, bucket, key, b"", options~)
-  let client = @http.Client(request.origin)
-  let extra_headers = Map([])
-  request
-  .extra_headers()
-  .each((key, val) => extra_headers.set(@http.CaseInsensitiveString(key), val))
-
-  let response = client
-    ..request(@http.Get, request.target, extra_headers~)
-    .end_request() catch {
-      err => {
-        client.close()
-        raise err
-      }
-    }
-  response
+) -> String raise {
+  self.presigned_url(Put, bucket, key, expires_seconds~, content_type?)
 }
 
 ///|
