@@ -52,7 +52,7 @@ pub suberror S3Error {
 ///|
 struct Client {
   config : Config
-}
+} derive(Eq, Debug)
 
 ///|
 pub struct ObjectResult {
