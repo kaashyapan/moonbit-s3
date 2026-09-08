@@ -105,12 +105,31 @@ pub fn Credentials::Credentials(
 }
 
 ///|
+/// Create an S3 client configuration.
+///
+/// `endpoint_style` is optional and defaults based on the endpoint:
+/// - No `endpoint` (AWS default URL): `VirtualHost`, the AWS-standard
+///   `bucket.s3.<region>.amazonaws.com` addressing.
+/// - Custom `endpoint` (MinIO, R2, Ceph, Garage, ...): `Path`, since
+///   third-party S3-compatible services generally do not resolve
+///   `<bucket>.<endpoint>` subdomains.
+/// An explicit `endpoint_style` always wins.
 pub fn Config::Config(
   region : String,
   credentials : Credentials,
   endpoint? : String,
-  endpoint_style? : EndpointStyle = VirtualHost,
+  endpoint_style? : EndpointStyle,
 ) -> Config {
+  let endpoint_style = match endpoint_style {
+    Some(style) => style
+    None =>
+      // Virtual-host addressing needs DNS control over `bucket.<endpoint>`,
+      // which only AWS (the implicit endpoint) provides.
+      match endpoint {
+        Some(_) => Path
+        None => VirtualHost
+      }
+  }
   { region, credentials, endpoint, endpoint_style, }
 }
 

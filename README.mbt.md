@@ -1,8 +1,8 @@
 # hackwaly/s3
 
-Async S3 client for MoonBit, built on `moonbitlang/async/http`.
+** Forked from hackwaly/s3 **
 
-This package supports the native backend.
+Async S3 client for MoonBit, built on `moonbitlang/async/http`.
 
 ```mbt nocheck
 ///|
@@ -39,3 +39,5 @@ Implemented operations:
 - `head_object`
 - `delete_object`
 - `list_objects_v2`
+- `generate_presigned_get_url`
+- `generate_presigned_put_url`

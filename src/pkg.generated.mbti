@@ -1,5 +1,5 @@
 // Generated using `moon info`, DON'T EDIT IT
-package "hackwaly/s3"
+package "kaashyapan/s3"
 
 import {
   "moonbitlang/async/http",
