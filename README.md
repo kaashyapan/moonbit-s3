@@ -2,8 +2,6 @@
 
 Async S3 client for MoonBit, built on `moonbitlang/async/http`.
 
-This package supports the native backend.
-
 ```mbt nocheck
 ///|
 async fn example {

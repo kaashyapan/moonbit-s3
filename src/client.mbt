@@ -182,14 +182,10 @@ pub async fn Client::get_object(
   .extra_headers()
   .each((key, val) => extra_headers.set(@http.CaseInsensitiveString(key), val))
 
+  errdefer client.close()
   let response = client
     ..request(@http.Get, request.target, extra_headers~)
-    .end_request() catch {
-      err => {
-        client.close()
-        raise err
-      }
-    }
+    .end_request()
   if !is_success_response(response) {
     defer client.close()
     raise_service_error_response(response, client)
