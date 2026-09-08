@@ -31,14 +31,15 @@ fn Client::prepare_request(
   if self.config.credentials.session_token is Some(token) {
     headers["x-amz-security-token"] = token
   }
-  let headers = sign_headers(
-    meth,
+  let headers = @sigv4.sign_headers(
+    method_name(meth),
     path,
     options.query,
     headers,
     payload_hash,
-    self.config.credentials,
+    to_sigv4_credentials(self.config.credentials),
     self.config.region,
+    "s3",
     timestamp,
   )
   { origin, target: append_query(path, options.query), headers, }
@@ -298,15 +299,20 @@ fn Client::presigned_url(
   }
   let (origin, host) = endpoint_origin_and_host(self.config, bucket)
   let path = canonical_object_path(self.config, bucket, key)
-  let query = presign_query(
-    meth,
+  let signed_headers : Map[String, String] = Map([])
+  if content_type is Some(value) {
+    signed_headers["content-type"] = value
+  }
+  let query = @sigv4.presign_query(
+    method_name(meth),
     path,
     host,
-    content_type?,
-    self.config.credentials,
+    to_sigv4_credentials(self.config.credentials),
     self.config.region,
+    "s3",
     now_timestamp(),
     expires_seconds,
+    signed_headers~,
   )
   "\{origin}\{append_query(path, query)}"
 }

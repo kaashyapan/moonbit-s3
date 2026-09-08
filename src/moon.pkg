@@ -1,4 +1,5 @@
 import {
+  "kaashyapan/sigv4",
   "moonbitlang/async/http",
   "moonbitlang/async/io",
   "moonbitlang/core/buffer",
