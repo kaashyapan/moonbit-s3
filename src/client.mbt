@@ -107,9 +107,7 @@ async fn[T] Client::send(
   let request = self.prepare_request(meth, bucket, key, body, options~)
   let client = @http.Client(request.origin)
   let extra_headers = Map([])
-  request
-  .extra_headers()
-  .each((key, val) => extra_headers.set(@http.CaseInsensitiveString(key), val))
+  request.extra_headers().each((key, val) => extra_headers.set(key, val))
 
   defer client.close()
   client.request(http_method(meth), request.target, extra_headers~)
@@ -178,9 +176,7 @@ pub async fn Client::get_object(
   let request = self.prepare_request(Get, bucket, key, b"", options~)
   let client = @http.Client(request.origin)
   let extra_headers = Map([])
-  request
-  .extra_headers()
-  .each((key, val) => extra_headers.set(@http.CaseInsensitiveString(key), val))
+  request.extra_headers().each((key, val) => extra_headers.set(key, val))
 
   errdefer client.close()
   let response = client
