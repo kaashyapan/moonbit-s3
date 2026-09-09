@@ -17,3 +17,5 @@ node_modules/
 _build
 target
 .claude/
+moon.work
+.pi/

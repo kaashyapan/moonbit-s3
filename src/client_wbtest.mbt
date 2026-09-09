@@ -78,6 +78,108 @@ test "signed request uses AWS SigV4 canonical fields" {
 }
 
 ///|
+test "parse list buckets result" {
+  let xml =
+    #|<ListAllMyBucketsResult>
+    #|  <Owner><ID>owner-id-1</ID><DisplayName>owner</DisplayName></Owner>
+    #|  <Buckets>
+    #|    <Bucket><Name>one</Name><CreationDate>2024-01-01T00:00:00.000Z</CreationDate></Bucket>
+    #|    <Bucket><Name>two</Name></Bucket>
+    #|  </Buckets>
+    #|</ListAllMyBucketsResult>
+  let result = parse_list_buckets(xml)
+  assert_eq(result.buckets.length(), 2)
+  assert_eq(result.buckets[0].name, "one")
+  assert_true(
+    result.buckets[0].creation_date is Some("2024-01-01T00:00:00.000Z"),
+  )
+  assert_eq(result.buckets[1].name, "two")
+  assert_true(result.buckets[1].creation_date is None)
+  assert_eq(result.owner_id, Some("owner-id-1"))
+  assert_eq(result.owner_display_name, Some("owner"))
+  assert_true(result.prefix is None)
+  assert_true(result.continuation_token is None)
+}
+
+///|
+fn Client::service_signed_request(
+  self : Client,
+  meth : S3Method,
+  options? : RequestOptions = RequestOptions(),
+) -> Request raise {
+  self.prepare_service_request(meth, b"", options~)
+}
+
+///|
+test "list buckets targets the bare service endpoint without a bucket" {
+  // path-style custom endpoint
+  let client = test_client("https://minio.local:9000")
+  let req = client.service_signed_request(
+    Get,
+    options=RequestOptions(
+      query={ "prefix": "app-" },
+      timestamp="20130524T000000Z",
+    ),
+  )
+  assert_eq(req.origin, "https://minio.local:9000")
+  assert_eq(req.target, "/?prefix=app-")
+  assert_eq(req.headers["Host"], "minio.local:9000")
+  // default AWS endpoint (no bucket prefix even for virtual-host addressing)
+  let aws = Client(
+    Config("eu-west-1", Credentials("AKIAIOSFODNN7EXAMPLE", "secret")),
+  )
+  let aws_req = aws.service_signed_request(Get)
+  assert_eq(aws_req.origin, "https://s3.eu-west-1.amazonaws.com")
+  assert_eq(aws_req.target, "/")
+  assert_eq(aws_req.headers["Host"], "s3.eu-west-1.amazonaws.com")
+}
+
+///|
+test "create bucket configuration carries the location constraint" {
+  assert_eq(
+    create_bucket_configuration("eu-west-1"),
+    "<CreateBucketConfiguration><LocationConstraint>eu-west-1</LocationConstraint></CreateBucketConfiguration>",
+  )
+}
+
+///|
+fn assert_bucket_rejected(meth : S3Method) -> Unit raise {
+  let client = test_client("https://examplebucket.s3.amazonaws.com")
+  try {
+    ignore(
+      client.signed_request(
+        meth,
+        "",
+        "",
+        options=RequestOptions(timestamp="20130524T000000Z"),
+      ),
+    )
+    fail("expected invalid input")
+  } catch {
+    S3Error::InvalidInput(message) =>
+      assert_eq(message, "bucket must not be empty")
+    _ => fail("expected invalid input")
+  }
+}
+
+///|
+test "bucket operations reject empty bucket before signing" {
+  assert_bucket_rejected(Put)
+  assert_bucket_rejected(Head)
+  assert_bucket_rejected(Delete)
+}
+
+///|
+test "bucket root paths target the bucket for head create and delete" {
+  let client = test_client("https://examplebucket.s3.amazonaws.com")
+  let options = RequestOptions(timestamp="20130524T000000Z")
+  for meth in [Head, Put, Delete] {
+    let req = client.signed_request(meth, "examplebucket", "", options~)
+    assert_eq(req.target, "/examplebucket/")
+  }
+}
+
+///|
 test "parse list objects v2 result" {
   let xml =
     #|<ListBucketResult>
@@ -358,13 +460,11 @@ test "signer controlled headers are filtered case insensitively" {
   assert_true(req.headers.get("Accept-Encoding") is Some("identity"))
   assert_true(req.headers.get("host") is None)
   assert_true(req.headers.get("Transfer-Encoding") is None)
-  assert_true(req.headers.get("X-Amz-Date") is None)
-  assert_true(req.headers.get("X-Amz-Content-Sha256") is None)
-  assert_true(req.headers.get("X-Amz-Security-Token") is None)
+  assert_true(req.headers.get("authorization") is None)
   assert_eq(req.headers["Host"], "examplebucket.s3.amazonaws.com")
-  assert_eq(req.headers["x-amz-date"], "20130524T000000Z")
-  assert_eq(req.headers["x-amz-content-sha256"], "UNSIGNED-PAYLOAD")
-  assert_eq(req.headers["x-amz-security-token"], "session-token")
+  assert_eq(req.headers["X-Amz-Date"], "20130524T000000Z")
+  assert_eq(req.headers["X-Amz-Content-Sha256"], "UNSIGNED-PAYLOAD")
+  assert_eq(req.headers["X-Amz-Security-Token"], "session-token")
   assert_eq(req.headers["Content-Length"], "5")
   assert_true(
     req.headers["Authorization"].contains(

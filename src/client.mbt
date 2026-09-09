@@ -1,4 +1,54 @@
 ///|
+/// Sign a request for an already-resolved origin/host/path. The shared core
+/// of `prepare_request` (bucket operations) and `prepare_service_request`
+/// (bucketless operations such as ListBuckets).
+fn Client::sign_request(
+  self : Client,
+  meth : S3Method,
+  origin : String,
+  host : String,
+  path : String,
+  body : &@io.Data,
+  options : RequestOptions,
+) -> Request raise {
+  let timestamp = match options.timestamp {
+    Some(value) => value
+    None => now_timestamp()
+  }
+  let query = query_params(options.query)
+  let headers = copy_user_headers(options.headers)
+  if meth is Put && !contains_header(headers, "content-length") {
+    headers["Content-Length"] = body.binary().length().to_string()
+  }
+  headers["Accept-Encoding"] = "identity"
+  headers["Host"] = host
+  let payload_hash = match options.payload_hash {
+    Some(value) => @sigv4.Provided(value)
+    None => @sigv4.Sha256
+  }
+  let signed = @sigv4.sign(
+    {
+      meth: http_method(meth),
+      path,
+      query,
+      headers: headers.to_array(),
+      body: body.binary(),
+    },
+    to_sigv4_credentials(self.config.credentials),
+    @sigv4.SigningOptions::for_s3(
+      timestamp~,
+      region=self.config.region,
+      payload_hash~,
+    ),
+  )
+  {
+    origin,
+    target: append_query(path, @sigv4.canonical_query_string(signed.query)),
+    headers: headers_map(signed.headers),
+  }
+}
+
+///|
 fn Client::prepare_request(
   self : Client,
   meth : S3Method,
@@ -10,39 +60,32 @@ fn Client::prepare_request(
   if bucket == "" {
     raise S3Error::InvalidInput("bucket must not be empty")
   }
-  let timestamp = match options.timestamp {
-    Some(value) => value
-    None => now_timestamp()
-  }
-  let payload_hash = match options.payload_hash {
-    Some(value) => value
-    None => sha256_data_hex(body)
-  }
   let (origin, host) = endpoint_origin_and_host(self.config, bucket)
   let path = canonical_object_path(self.config, bucket, key)
-  let headers = copy_user_headers(options.headers)
-  if meth is Put && !contains_header(headers, "content-length") {
-    headers["Content-Length"] = body.binary().length().to_string()
+  self.sign_request(meth, origin, host, path, body, options)
+}
+
+///|
+/// Prepare a bucketless request against the bare service endpoint (e.g.
+/// ListBuckets): `GET /` on `s3.<region>.amazonaws.com` or the configured
+/// endpoint, with no bucket component in the host or path.
+fn Client::prepare_service_request(
+  self : Client,
+  meth : S3Method,
+  body : &@io.Data,
+  options? : RequestOptions = RequestOptions(),
+) -> Request raise {
+  let (scheme, host) = service_endpoint_parts(self.config)
+  self.sign_request(meth, "\{scheme}://\{host}", host, "/", body, options)
+}
+
+///|
+fn headers_map(headers : Array[(String, String)]) -> Map[String, String] {
+  let map : Map[String, String] = Map([])
+  for pair in headers {
+    map[pair.0] = pair.1
   }
-  headers["Accept-Encoding"] = "identity"
-  headers["Host"] = host
-  headers["x-amz-date"] = timestamp
-  headers["x-amz-content-sha256"] = payload_hash
-  if self.config.credentials.session_token is Some(token) {
-    headers["x-amz-security-token"] = token
-  }
-  let headers = @sigv4.sign_headers(
-    method_name(meth),
-    path,
-    options.query,
-    headers,
-    payload_hash,
-    to_sigv4_credentials(self.config.credentials),
-    self.config.region,
-    "s3",
-    timestamp,
-  )
-  { origin, target: append_query(path, options.query), headers, }
+  map
 }
 
 ///|
@@ -105,6 +148,28 @@ async fn[T] Client::send(
   f : async (@http.Response, @http.Client) -> T,
 ) -> T {
   let request = self.prepare_request(meth, bucket, key, body, options~)
+  send_request(meth, request, body, f)
+}
+
+///|
+async fn[T] Client::send_service(
+  self : Client,
+  meth : S3Method,
+  body : &@io.Data,
+  options? : RequestOptions = RequestOptions(),
+  f : async (@http.Response, @http.Client) -> T,
+) -> T {
+  let request = self.prepare_service_request(meth, body, options~)
+  send_request(meth, request, body, f)
+}
+
+///|
+async fn[T] send_request(
+  meth : S3Method,
+  request : Request,
+  body : &@io.Data,
+  f : async (@http.Response, @http.Client) -> T,
+) -> T {
   let client = @http.Client(request.origin)
   let extra_headers = Map([])
   request.extra_headers().each((key, val) => extra_headers.set(key, val))
@@ -277,6 +342,116 @@ pub async fn Client::list_objects_v2(
 }
 
 ///|
+/// List all buckets owned by the authenticated account.
+///
+///    :param prefix: Optional — restrict results to buckets whose names
+///        begin with this prefix
+///    :param continuation_token: Optional — token from a previous truncated
+///        response
+///    :param max_buckets: Optional — cap on the number of buckets returned
+///    :return: The bucket list, plus owner identity and pagination fields
+pub async fn Client::list_buckets(
+  self : Client,
+  prefix? : String,
+  continuation_token? : String,
+  max_buckets? : Int,
+  options? : RequestOptions = RequestOptions(),
+) -> ListBucketsResult {
+  let query = options.query.copy()
+  if prefix is Some(value) {
+    query["prefix"] = value
+  }
+  if continuation_token is Some(value) {
+    query["continuation-token"] = value
+  }
+  if max_buckets is Some(value) {
+    query["max-buckets"] = value.to_string()
+  }
+  let options = {
+    headers: options.headers,
+    query,
+    timestamp: options.timestamp,
+    payload_hash: options.payload_hash,
+  }
+  self.send_service(Get, b"", options~, (response, client) => {
+    let body = client.read_all().text()
+    ensure_success_response(response, body)
+    parse_list_buckets(body)
+  })
+}
+
+///|
+/// Check that a bucket exists and the caller has permission to access it.
+/// A successful response proves existence; a 403 means the bucket exists
+/// but is owned by another account; a 404 raises `ServiceError`.
+///
+///    :param bucket: Name of the S3 bucket
+///    :return: The response on success (no response body for HEAD)
+pub async fn Client::head_bucket(
+  self : Client,
+  bucket : String,
+  options? : RequestOptions = RequestOptions(),
+) -> @http.Response {
+  self.send(Head, bucket, "", b"", options~, (response, client) => {
+    if !is_success_response(response) {
+      ignore(client)
+      raise_service_error_response_without_body(response)
+    }
+    response
+  })
+}
+
+///|
+/// The `CreateBucketConfiguration` body S3 requires when creating a bucket
+/// outside `us-east-1` (which rejects the constraint instead).
+fn create_bucket_configuration(region : String) -> String {
+  "<CreateBucketConfiguration><LocationConstraint>\{region}</LocationConstraint></CreateBucketConfiguration>"
+}
+
+///|
+/// Create a bucket. Outside `us-east-1` the request carries a
+/// `LocationConstraint` with the configured region, as the S3 API requires.
+///
+///    :param bucket: Name of the S3 bucket to create
+///    :return: The response on success (200, or 3xx redirect)
+pub async fn Client::create_bucket(
+  self : Client,
+  bucket : String,
+  options? : RequestOptions = RequestOptions(),
+) -> @http.Response {
+  let body : Bytes = if self.config.region == "us-east-1" {
+    b""
+  } else {
+    @utf8.encode(create_bucket_configuration(self.config.region))
+  }
+  self.send(Put, bucket, "", body, options~, (response, client) => {
+    if !is_success_response(response) {
+      raise_service_error_response(response, client)
+    }
+    response
+  })
+}
+
+///|
+/// Delete a bucket. The bucket must be empty, or S3 rejects the request
+/// with `BucketNotEmpty`.
+///
+///    :param bucket: Name of the S3 bucket to delete
+///    :return: The response on success (204)
+pub async fn Client::delete_bucket(
+  self : Client,
+  bucket : String,
+  options? : RequestOptions = RequestOptions(),
+) -> @http.Response {
+  self.send(Delete, bucket, "", b"", options~, (response, client) => {
+    if !is_success_response(response) {
+      raise_service_error_response(response, client)
+    }
+    response
+  })
+}
+
+///|
 fn Client::presigned_url(
   self : Client,
   meth : S3Method,
@@ -291,22 +466,23 @@ fn Client::presigned_url(
   }
   let (origin, host) = endpoint_origin_and_host(self.config, bucket)
   let path = canonical_object_path(self.config, bucket, key)
-  let signed_headers : Map[String, String] = Map([])
-  if content_type is Some(value) {
-    signed_headers["content-type"] = value
+  let headers = match content_type {
+    Some(value) => [("Host", host), ("Content-Type", value)]
+    None => [("Host", host)]
   }
-  let query = @sigv4.presign_query(
-    method_name(meth),
-    path,
-    host,
-    to_sigv4_credentials(self.config.credentials),
-    self.config.region,
-    "s3",
-    now_timestamp(),
-    expires_seconds,
-    signed_headers~,
+  let (scheme, _) = endpoint_parts(origin)
+  let presigned = @sigv4.presign_url(
+    request={ meth: http_method(meth), path, query: [], headers, body: b"", },
+    credentials=to_sigv4_credentials(self.config.credentials),
+    options=@sigv4.SigningOptions::for_s3(
+      timestamp=now_timestamp(),
+      region=self.config.region,
+      payload_hash=Unsigned,
+    ),
+    expires=expires_seconds,
+    scheme~,
   )
-  "\{origin}\{append_query(path, query)}"
+  presigned.url
 }
 
 ///|

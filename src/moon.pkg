@@ -1,12 +1,12 @@
 import {
   "kaashyapan/sigv4",
+  "kaashyapan/uri",
   "moonbitlang/async/http",
   "moonbitlang/async/io",
   "moonbitlang/core/buffer",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/env",
   "moonbitlang/core/string",
-  "moonbitlang/x/crypto",
   "moonbitlang/x/time",
 }
 

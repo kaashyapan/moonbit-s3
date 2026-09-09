@@ -198,6 +198,24 @@ fn required_xml_text(
 }
 
 ///|
+fn parse_list_buckets(xml : String) -> ListBucketsResult raise {
+  let buckets : Array[Bucket] = []
+  for block in xml_blocks(xml, "Bucket") {
+    buckets.push({
+      name: required_xml_text(block, "Name", "Bucket"),
+      creation_date: xml_text(block, "CreationDate"),
+    })
+  }
+  {
+    owner_id: xml_text(xml, "ID"),
+    owner_display_name: xml_text(xml, "DisplayName"),
+    prefix: xml_text(xml, "Prefix"),
+    continuation_token: xml_text(xml, "ContinuationToken"),
+    buckets,
+  }
+}
+
+///|
 fn parse_list_objects_v2(xml : String) -> ListObjectsV2Result raise {
   let contents : Array[ListedObject] = []
   for block in xml_blocks(xml, "Contents") {

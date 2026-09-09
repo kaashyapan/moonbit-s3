@@ -76,6 +76,21 @@ pub struct ListObjectsV2Result {
 } derive(Debug, Eq)
 
 ///|
+pub struct Bucket {
+  name : String
+  creation_date : String?
+} derive(Debug, Eq)
+
+///|
+pub struct ListBucketsResult {
+  owner_id : String?
+  owner_display_name : String?
+  prefix : String?
+  continuation_token : String?
+  buckets : Array[Bucket]
+} derive(Debug, Eq)
+
+///|
 struct RequestOptions {
   headers : Map[String, String]
   query : Map[String, String]

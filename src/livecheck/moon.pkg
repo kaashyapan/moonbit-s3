@@ -1,0 +1,11 @@
+import {
+  "moonbitlang/async",
+  "moonbitlang/async/http",
+  "moonbitlang/async/io",
+  "moonbitlang/core/env",
+  "kaashyapan/s3",
+}
+
+supported_targets = "+all"
+
+pkgtype(kind: "executable")
